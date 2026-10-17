@@ -1,0 +1,104 @@
+<form version="1.1" theme="light">
+  <label>LDAP - Investigation</label>
+  <fieldset submitButton="false">
+    <input type="radio" token="search_type" searchWhenChanged="true">
+      <label>Search Type</label>
+      <choice value="user">User (samAccountName)</choice>
+      <choice value="computer">Computer (CN / Barcode)</choice>
+      <default>user</default>
+      <change>
+        <condition value="user">
+          <set token="is_user">true</set>
+          <unset token="is_computer"></unset>
+        </condition>
+        <condition value="computer">
+          <set token="is_computer">true</set>
+          <unset token="is_user"></unset>
+        </condition>
+      </change>
+    </input>
+    <input type="text" token="entity" searchWhenChanged="true">
+      <label>Identifier</label>
+      <initialValue>$drilldown_host$</initialValue>
+    </input>
+  </fieldset>
+
+  <init>
+    <set token="field1.earliest">-24h@h</set>
+    <set token="field1.latest">now</set>
+  </init>
+
+  <!-- ============================================================ -->
+  <!--         USER DETAILS                                         -->
+  <!-- ============================================================ -->
+  <row depends="is_user">
+    <panel>
+      <title>User Attributes (samAccountName: $entity$)</title>
+      <table>
+        <search>
+          <query><![CDATA[
+| ldapsearch domain="default" search="(&(samAccountName=$entity$))" attrs="uSNChanged, lastLogonTimestamp, sAMAccountName, distinguishedName, userAccountControl, whenCreated, personalTitle, displayName, givenName, sn, mail, telephoneNumber, accountExpires, memberOf, objectCategory, proxyAddresses, msExchMailboxAuditLastAdminAccess, msExchccMailConnectAsPassword, msExchRecipientTypeDetails, msExchMobileMailboxFlags, protocolSettings, whenChanged, msExchRBACPolicyLink, employeeID, mobile, msExchWhenMailboxCreated, msExchUserAccountControl, title, msExchArchiveQuota, msRTCSIP-UserRoutingGroupId, msExchArchiveWarnQuota, msExchMDBRulesQuota, description, objectGUID, msRTCSIP-InternetAccessEnabled, company, msExchUMEnabledFlags2, logonCount, lastLogon, pwdLastSet, msExchHomeServerName, objectSid, msRTCSIP-UserEnabled, msExchMailboxAuditEnable, badPwdCount, badPasswordTime, msExchELCMailboxFlags, primaryGroupID, sIDHistory, msExchMasterAccountSid, lastLogoff, msDS-KeyCredentialLink, msDS-AllowedToDelegateTo, uSNCreated, msDS-LastKnownRDN"
+| eval userAccountControl_desc = case(userAccountControl==512,"NORMAL_ACCOUNT", userAccountControl==514,"ACCOUNT_DISABLED", userAccountControl==544,"PASSWD_NOTREQD", userAccountControl==546,"DISABLED_PASSWD_NOTREQD", userAccountControl==66048,"NORMAL_DONT_EXPIRE", userAccountControl==262656,"SMARTCARD_REQUIRED", userAccountControl==4194304,"DONT_REQUIRE_PREAUTH (AS-REP Roastable)", userAccountControl==524288,"TRUSTED_FOR_DELEGATION", true(), tostring(userAccountControl))
+| eval primaryGroupID_desc = case(primaryGroupID==512,"Domain Admins", primaryGroupID==513,"Domain Users", primaryGroupID==514,"Domain Guests", primaryGroupID==515,"Domain Computers", primaryGroupID==516,"Domain Controllers", primaryGroupID==518,"Schema Admins", primaryGroupID==519,"Enterprise Admins", primaryGroupID==520,"Group Policy Creators", primaryGroupID==521,"Read-only DCs", primaryGroupID==525,"Protected Users", true(), tostring(primaryGroupID))
+| eval msExchRecipientTypeDetails_desc = case(msExchRecipientTypeDetails==1,"UserMailbox", msExchRecipientTypeDetails==2,"MailUser", msExchRecipientTypeDetails==4,"MailContact", msExchRecipientTypeDetails==8,"MailGroup", msExchRecipientTypeDetails==16,"RoomMailbox", msExchRecipientTypeDetails==32,"EquipmentMailbox", msExchRecipientTypeDetails==128,"LinkedMailbox", msExchRecipientTypeDetails==256,"SharedMailbox", msExchRecipientTypeDetails==2048,"GroupMailbox", msExchRecipientTypeDetails==2147483648,"ArbitrationMailbox", true(), tostring(msExchRecipientTypeDetails))
+| eval msExchUserAccountControl_desc = case(msExchUserAccountControl==0,"NO_FLAGS (Enabled)", msExchUserAccountControl==1,"ACCOUNT_DISABLED", msExchUserAccountControl==2,"MAPI_ENABLED", msExchUserAccountControl==4,"OWA_ENABLED", msExchUserAccountControl==8,"ACTIVESYNC_ENABLED", msExchUserAccountControl==16,"IMAP_ENABLED", msExchUserAccountControl==32,"POP_ENABLED", msExchUserAccountControl==64,"UM_ENABLED", true(), tostring(msExchUserAccountControl))
+| eval msExchELCMailboxFlags_desc = case(msExchELCMailboxFlags==0,"NO_HOLD", msExchELCMailboxFlags==2,"RETENTION_HOLD", msExchELCMailboxFlags==128,"LITIGATION_HOLD", msExchELCMailboxFlags==130,"LITIGATION_HOLD + RETENTION_HOLD", msExchELCMailboxFlags==256,"IN_PLACE_HOLD", msExchELCMailboxFlags==512,"SITE_MAILBOX", true(), tostring(msExchELCMailboxFlags))
+| eval accountExpires_desc = if(accountExpires=="(never)" OR accountExpires=="9223372036854775807", "Never", accountExpires)
+| eval msRTCSIP_UserEnabled_desc = if('msRTCSIP-UserEnabled'==1, "Enabled", "Disabled")
+| eval msExchMailboxAuditEnable_desc = if(msExchMailboxAuditEnable==1, "Enabled (Auditing ON)", "Disabled (Auditing OFF)")
+| eval msRTCSIP_InternetAccessEnabled_desc = if('msRTCSIP-InternetAccessEnabled'==1, "Enabled", "Disabled")
+| eval sIDHistory_Status = if(isnull(sIDHistory) OR sIDHistory=="[]" OR sIDHistory=="", "✅ CLEAN (Empty)", "🚨 POPULATED - INVESTIGATE IMMEDIATELY")
+| eval msDS_KeyCredentialLink_Status = if(isnull('msDS-KeyCredentialLink') OR 'msDS-KeyCredentialLink'=="[]" OR 'msDS-KeyCredentialLink'=="", "✅ CLEAN (Empty)", "🚨 SHADOW CREDENTIALS DETECTED")
+| eval msDS_AllowedToDelegateTo_Status = if(isnull('msDS-AllowedToDelegateTo') OR 'msDS-AllowedToDelegateTo'=="[]" OR 'msDS-AllowedToDelegateTo'=="", "✅ CLEAN (Empty)", "⚠️ POPULATED - DELEGATION MISCONFIG")
+| rename "userAccountControl_desc" AS "UAC (Decoded)", "primaryGroupID_desc" AS "Primary Group (Decoded)", "msExchRecipientTypeDetails_desc" AS "Mailbox Type", "msExchUserAccountControl_desc" AS "Exchange UAC (Decoded)", "msExchELCMailboxFlags_desc" AS "Hold / Retention Flags", "accountExpires_desc" AS "Account Expires", "msRTCSIP_UserEnabled_desc" AS "Teams/Skype Enabled", "msExchMailboxAuditEnable_desc" AS "Mailbox Auditing", "msRTCSIP_InternetAccessEnabled_desc" AS "Teams External Access"
+| table distinguishedName, sAMAccountName, displayName, givenName, sn, mail, title, employeeID, company, "UAC (Decoded)", "Primary Group (Decoded)", "Mailbox Type", "Exchange UAC (Decoded)", "Hold / Retention Flags", "Account Expires", "Teams/Skype Enabled", "Mailbox Auditing", "Teams External Access", lastLogon, lastLogonTimestamp, logonCount, badPwdCount, badPasswordTime, pwdLastSet, whenCreated, whenChanged, memberOf, objectSid, objectGUID, sIDHistory_Status, msDS_KeyCredentialLink_Status, msDS_AllowedToDelegateTo_Status, msExchHomeServerName, msExchArchiveQuota, msExchArchiveWarnQuota, description, telephoneNumber, mobile, msExchMDBRulesQuota, msExchMobileMailboxFlags, protocolSettings, msExchMailboxAuditLastAdminAccess, msExchWhenMailboxCreated, msDS-LastKnownRDN, uSNCreated, uSNChanged
+| transpose
+| rename "column" AS "Attribute", "row 1" AS "Value"
+| search Value!="[]" AND Value!="null" AND Value!="NULL" AND Value!="" AND Value!="None"
+]]></query>
+          <earliest>$field1.earliest$</earliest>
+          <latest>$field1.latest$</latest>
+        </search>
+        <option name="drilldown">cell</option>
+        <option name="wrap">true</option>
+        <option name="rowNumbers">false</option>
+        <option name="count">100</option>
+      </table>
+    </panel>
+  </row>
+
+
+  <!-- ============================================================ -->
+  <!--         COMPUTER DETAILS (CN / BARCODE)                      -->
+  <!-- ============================================================ -->
+  <row depends="is_computer">
+    <panel>
+      <title>Computer Attributes (CN: $entity$)</title>
+      <table>
+        <search>
+          <query><![CDATA[
+| ldapsearch domain="default" search="(&(cn=$entity$))" attrs="uSNChanged, lastLogonTimestamp, sAMAccountName, distinguishedName, userAccountControl, whenCreated, personalTitle, displayName, givenName, sn, mail, telephoneNumber, accountExpires, memberOf, objectCategory, proxyAddresses, msExchMailboxAuditLastAdminAccess, msExchccMailConnectAsPassword, msExchRecipientTypeDetails, msExchMobileMailboxFlags, protocolSettings, whenChanged, msExchRBACPolicyLink, employeeID, mobile, msExchWhenMailboxCreated, msExchUserAccountControl, title, msExchArchiveQuota, msRTCSIP-UserRoutingGroupId, msExchArchiveWarnQuota, msExchMDBRulesQuota, description, objectGUID, msRTCSIP-InternetAccessEnabled, company, msExchUMEnabledFlags2, logonCount, lastLogon, pwdLastSet, msExchHomeServerName, objectSid, msRTCSIP-UserEnabled, msExchMailboxAuditEnable, badPwdCount, badPasswordTime, msExchELCMailboxFlags, primaryGroupID, sIDHistory, msExchMasterAccountSid, lastLogoff, msDS-KeyCredentialLink, msDS-AllowedToDelegateTo, uSNCreated, msDS-LastKnownRDN, department, cn, dNSHostName, extensionAttribute10, msDS-SupportedEncryptionTypes, ms-Mcs-AdmPwdExpirationTime, servicePrincipalName"
+| eval userAccountControl_desc = case(userAccountControl==4096,"WORKSTATION_TRUST (Computer)", userAccountControl==8192,"SERVER_TRUST", userAccountControl==532480,"DOMAIN_CTRL_TRUST", true(), tostring(userAccountControl))
+| eval primaryGroupID_desc = case(primaryGroupID==512,"Domain Admins", primaryGroupID==513,"Domain Users", primaryGroupID==515,"Domain Computers", primaryGroupID==516,"Domain Controllers", true(), tostring(primaryGroupID))
+| eval msDS_SupportedEncryptionTypes_desc = case(msDS-SupportedEncryptionTypes==0,"None", msDS-SupportedEncryptionTypes==1,"DES (Weak)", msDS-SupportedEncryptionTypes==4,"AES128", msDS-SupportedEncryptionTypes==8,"AES256", msDS-SupportedEncryptionTypes==24,"AES128+AES256 (Secure)", true(), tostring(msDS-SupportedEncryptionTypes))
+| eval ms_Mcs_AdmPwdExpirationTime_desc = if(isnull('ms-Mcs-AdmPwdExpirationTime') OR 'ms-Mcs-AdmPwdExpirationTime'=="0", "⚠️ LAPS Not Configured/Expired", strftime('ms-Mcs-AdmPwdExpirationTime', "%Y-%m-%d %H:%M:%S"))
+| eval msExchMailboxAuditEnable_desc = if(msExchMailboxAuditEnable==1, "Enabled", "Disabled")
+| eval sIDHistory_Status = if(isnull(sIDHistory) OR sIDHistory=="[]", "✅ CLEAN", "🚨 SID HISTORY FOUND")
+| eval msDS_KeyCredentialLink_Status = if(isnull('msDS-KeyCredentialLink') OR 'msDS-KeyCredentialLink'=="[]", "✅ CLEAN", "🚨 SHADOW CREDENTIALS")
+| rename "userAccountControl_desc" AS "UAC (Decoded)", "primaryGroupID_desc" AS "Primary Group", "msDS_SupportedEncryptionTypes_desc" AS "Kerberos Encryption", "ms_Mcs_AdmPwdExpirationTime_desc" AS "LAPS Password Expiry", "msExchMailboxAuditEnable_desc" AS "Mailbox Auditing"
+| table cn, sAMAccountName, dNSHostName, distinguishedName, "UAC (Decoded)", "Primary Group", "Kerberos Encryption", "LAPS Password Expiry", "Mailbox Auditing", lastLogon, lastLogonTimestamp, logonCount, badPwdCount, whenCreated, whenChanged, memberOf, objectSid, objectGUID, servicePrincipalName, sIDHistory_Status, msDS_KeyCredentialLink_Status, msDS-AllowedToDelegateTo, extensionAttribute10, description
+| transpose
+| rename "column" AS "Attribute", "row 1" AS "Value"
+| search Value!="[]" AND Value!="null" AND Value!="NULL" AND Value!="" AND Value!="None"
+]]></query>
+          <earliest>$field1.earliest$</earliest>
+          <latest>$field1.latest$</latest>
+        </search>
+        <option name="drilldown">cell</option>
+        <option name="wrap">true</option>
+        <option name="rowNumbers">false</option>
+        <option name="count">100</option>
+      </table>
+    </panel>
+  </row>
+</form>

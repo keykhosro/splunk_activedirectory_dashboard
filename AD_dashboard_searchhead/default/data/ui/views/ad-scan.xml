@@ -1,0 +1,167 @@
+<form theme="light" version="1.1">
+  <label>LDAP - Security Dashboard</label>
+  <description>Comprehensive AD security and compliance monitoring</description>
+  
+  <init>
+    <set token="time_range.earliest">-90d@d</set>
+    <set token="time_range.latest">now</set>
+  </init>
+
+  <!-- Section 1: Critical Attack Paths -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #DC4E41;">Critical Attack Paths &amp; High-Risk Accounts</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>How it shows:</strong> Checks for Kerberos delegation, password not required, don't require preauthentication (AS-REP roasting), SIDHistory, and Key Credential Links (Shadow Credentials).
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Accounts with Highest Risks (Critical Attack Paths)</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| where(isnotnull('msDS-KeyCredentialLink') OR isnotnull(sIDHistory) OR isnotnull('msDS-AllowedToDelegateTo') OR (LIKE(userAccountControl,"%DONT_REQ_PREAUTH%")) OR (LIKE(userAccountControl,"%TRUSTED_FOR_DELEGATION%")) OR (LIKE(userAccountControl,"%SERVER_TRUST_ACCOUNT%")) OR (LIKE(userAccountControl,"%PASSWD_NOTREQD%")) OR (LIKE(userAccountControl,"%TRUSTED_TO_AUTH_FOR_DELEGATION%"))) 
+| eval criticalflags="sIDHistory: " . coalesce(sIDHistory,"N/A") . " | msDS-KeyCredentialLink: " . coalesce('msDS-KeyCredentialLink',"N/A") . " | msDS-AllowedToDelegateTo : " . coalesce('msDS-AllowedToDelegateTo',"N/A")
+| eval hasdisabled=if(match(userAccountControl,"ACCOUNTDISABLE"),1,0) 
+| where hasdisabled = 0
+| table displayName,cn,criticalflags,userAccountControl</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="userAccountControl">
+          <colorPalette type="map">{"DONT_REQ_PREAUTH":"#DC4E41","TRUSTED_FOR_DELEGATION":"#F1813F","PASSWD_NOTREQD":"#F8BE34","TRUSTED_TO_AUTH_FOR_DELEGATION":"#DC4E41"}</colorPalette>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.displayName$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+  <!--  Exchange Security -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #006D9C;">Exchange Security Misconfigurations</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Risky mailbox configurations including shared mailboxes (MFA bypass), disabled auditing, and litigation hold status.<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Exchange Security Misconfigurations</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| where (msExchRecipientTypeDetails=256 OR msExchMailboxAuditEnable=0) 
+| table displayName,sAMAccountName,msExchRecipientTypeDetails,msExchMailboxAuditEnable,msExchELCMailboxFlags,msExchHomeServerName</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="msExchRecipientTypeDetails">
+          <colorPalette type="map">{"256":"#DC4E41"}</colorPalette>
+        </format>
+        <format type="color" field="msExchMailboxAuditEnable">
+          <colorPalette type="map">{"0":"#DC4E41"}</colorPalette>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.displayName$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <!--  Recent AD Tampering -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #F1813F;">Recent AD Tampering/Modifications</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Accounts that have been modified recently (within 10 days) but existed before the change.<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Recent AD Tampering/Modifications</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| eval lastchange_epoch=strptime(whenChanged,"%Y-%m-%d %H:%M:%S+00:00") 
+| eval days_since_change = floor((now()-lastchange_epoch)/86400) 
+| where days_since_change &lt; 10 AND whenCreated &lt; whenChanged 
+| table cn,days_since_change,whenChanged,whenCreated,userAccountControl
+| sort - whenChanged
+</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="days_since_change">
+          <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F8BE34" minColor="#53A051"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.cn$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <!--  Exchange Admin Access -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #F8BE34;">Exchange Admin Access &amp; Insider Threat</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Accounts that have accessed mailboxes with admin privileges within the last 30 days.<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Exchange Admin Access and Insider Threat (30 days)</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| where isnotnull(msExchMailboxAuditLastAdminAccess) 
+| eval adminaccess_epoch=strptime(msExchMailboxAuditLastAdminAccess,"%Y-%m-%d %H:%M:%S+00:00") 
+| eval days_since_admin_access = floor((now()-adminaccess_epoch)/86400) 
+| where days_since_admin_access &lt; 30 
+| table cn,sAMAccountName,days_since_admin_access,msExchMailboxAuditLastAdminAccess,userAccountControl</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="days_since_admin_access">
+          <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F8BE34" minColor="#53A051"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.cn$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+</form>

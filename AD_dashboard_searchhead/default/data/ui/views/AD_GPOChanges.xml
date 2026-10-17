@@ -1,0 +1,155 @@
+<form version="1.1" theme="light">
+  <label>AD – Group &amp; GPO Changes</label>
+  <description>Active Directory group membership and Group Policy Object changes — privilege escalation &amp; configuration drift visibility</description>
+
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>📅 Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label>🔍 Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter by user, group, GPO, or administrator</placeholder>
+    </input>
+  </fieldset>
+
+  <!-- ============================================================ -->
+  <!--    SECTION 2 — GROUP POLICY CHANGES                          -->
+  <!-- ============================================================ -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #fce4ec; padding: 12px 16px; border-radius: 4px; border-left: 4px solid #C62828; margin-bottom: 8px;">
+          <h2 style="margin: 0; color: #C62828; font-size: 18px; font-weight: 500;">AD – Group Policy Changes</h2>
+          <p style="margin: 4px 0 0 0; color: #555; font-size: 13px;">
+            Monitors creation, modification, and deletion of Group Policy Objects (GPOs) — critical for security configuration management.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Group Policy Object Changes</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security") EventCode IN (5136, 5137, 5138, 5139, 5141)
+| search $search_filter$
+| rex field=Message "(?im)^\s*Security ID:\s*(?&lt;Subject_SID&gt;[^\r\n]+)"
+| rex field=Message "(?im)^\s*Account Name:\s*(?&lt;Subject_Account_Name&gt;[^\r\n]+)"
+| rex field=Message "(?im)^\s*Account Domain:\s*(?&lt;Subject_Account_Domain&gt;[^\r\n]+)"
+| rex field=Message "(?im)^\s*Logon ID:\s*(?&lt;Logon_ID&gt;[^\r\n]+)"
+
+| rex field=Message "(?im)^\s*DN:\s*(?&lt;ObjectDN&gt;[^\r\n]+)"
+| rex field=Message "(?im)^\s*GUID:\s*(?&lt;ObjectGUID&gt;[^\r\n]+)"
+| rex field=Message "(?im)^\s*Class:\s*(?&lt;ObjectClass&gt;[^\r\n]+)"
+
+| rex field=Message "(?im)^\s*LDAP Display Name:\s*(?&lt;AttrName&gt;[^\r\n]+)"
+| rex field=Message "(?im)^\s*Value:\s*(?&lt;AttrValue&gt;[^\r\n]+)"
+
+| rex field=Message "(?is)Operation:.*?Type:\s*(?&lt;OperationType&gt;[^\r\n]+)"
+
+| eval AdminUser     = Subject_Account_Name
+| eval AdminDomain   = Subject_Account_Domain
+| eval admin_logonID = Logon_ID
+| eval ObjectClass   = trim(ObjectClass)
+| eval AttrName      = trim(AttrName)
+| eval AttrValue     = trim(AttrValue)
+| eval OperationType = trim(OperationType)
+
+| where
+    ObjectClass = "groupPolicyContainer"
+    OR ObjectClass = "organizationalUnit"
+    OR ObjectClass = "container"
+    OR AttrName IN ("gPLink","gPOptions","displayName","versionNumber",
+                    "flags","gPCFileSysPath","gPCFunctionalityVersion")
+    OR match(ObjectDN, "(?i)CN=Policies,CN=System")
+    OR match(ObjectDN, "(?i)CN=\{[A-F0-9\-]+\},CN=Policies")
+
+| eval Action = case(
+    EventCode=5137 AND ObjectClass="groupPolicyContainer",        "GPO Created",
+    EventCode=5141 AND ObjectClass="groupPolicyContainer",        "GPO Deleted",
+    EventCode=5136 AND AttrName="gPLink"     AND OperationType="Value Added",   "GPO Linked to OU",
+    EventCode=5136 AND AttrName="gPLink"     AND OperationType="Value Deleted", "GPO Unlinked from OU",
+    EventCode=5136 AND AttrName="gPOptions",                      "Block Inheritance Changed",
+    EventCode=5136 AND AttrName="versionNumber",                  "GPO Version Updated",
+    EventCode=5136 AND AttrName="displayName",                    "GPO Renamed",
+    EventCode=5139,                                               "Object Moved",
+    EventCode=5137,                                               "Object Created",
+    EventCode=5141,                                               "Object Deleted",
+    EventCode=5136,                                               "Object Modified",
+    1=1,                                                          "Other"
+)
+
+| rex field=AttrValue "(?i)cn=\{(?&lt;GPO_GUID&gt;[A-F0-9\-]+)\}"
+| rex field=AttrValue "(?i);(?&lt;GPO_Option&gt;\d)\]"
+| eval GPO_Option = case(
+    GPO_Option="0", "Enabled",
+    GPO_Option="1", "Disabled",
+    GPO_Option="2", "Enforced",
+    GPO_Option="3", "Disabled+Enforced",
+    1=1, GPO_Option)
+| rex field=ObjectDN "(?i)CN=\{(?&lt;DN_GPO_GUID&gt;[A-F0-9\-]+)\}"
+| rex field=ObjectDN "(?i)CN=(?&lt;DN_GPO_Name&gt;[^,]+),CN=Policies"
+
+| rex field=Message "Old DN:\s+(?&lt;old_dn&gt;.*)"
+| rex field=Message "New DN:\s+(?&lt;new_dn&gt;.*)"
+
+| eval GPO_GUID = coalesce(GPO_GUID, DN_GPO_GUID, ObjectGUID)
+| eval GPO_Name = coalesce(DN_GPO_Name, GPO_GUID, "Unknown GPO")
+
+| rex field=ObjectDN "(?i)(?&lt;TargetOU&gt;OU=[^,]+(?:,OU=[^,]+)*)"
+
+| eval TargetObject = case(
+    EventCode=5139, "Old: " . old_dn . " | New: " . new_dn,
+    1=1, ObjectDN)
+
+| eval Changes = case(
+    Action="GPO Linked to OU",          "GPO '" . GPO_Name . "' (" . GPO_GUID . ") linked to " . TargetOU . " [" . GPO_Option . "]",
+    Action="GPO Unlinked from OU",      "GPO '" . GPO_Name . "' (" . GPO_GUID . ") unlinked from " . TargetOU,
+    Action="Block Inheritance Changed", "gPOptions set to " . AttrValue . " on " . TargetOU,
+    Action="GPO Version Updated",       "versionNumber changed to " . AttrValue . " for " . GPO_Name,
+    Action="GPO Renamed",               "displayName changed to " . AttrValue . " for " . GPO_GUID,
+    Action="GPO Created",               "New GPO created: " . ObjectDN,
+    Action="GPO Deleted",               "GPO deleted: " . ObjectDN,
+    isnotnull(AttrName),                "Attribute '" . AttrName . "' = " . AttrValue,
+    1=1,                                Action)
+
+| table _time, ComputerName, AdminUser, AdminDomain, admin_logonID,
+        TargetObject, GPO_GUID,
+        Action, ObjectClass, Changes
+
+| rename ComputerName   as Computer,
+         AdminUser      as "Admin User",
+         AdminDomain    as "Admin Domain",
+         admin_logonID  as "Logon ID",
+         TargetObject   as "Target Object DN",
+         GPO_Name       as "GPO Name",
+         GPO_GUID       as "GPO GUID",
+         GPO_Option     as "Link Option",
+         ObjectClass    as "Object Class",
+         Changes        as "Details"
+
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Action">
+          <colorPalette type="map">{"GPO Created":#2E7D32, "Object Created":#43A047, "GPO Deleted":#B71C1C, "Object Deleted":#E53935, "GPO Linked to OU":#1565C0, "GPO Unlinked from OU":#FB8C00, "Block Inheritance Changed":#F9A825, "GPO Version Updated":#00838F, "GPO Renamed":#6A1B9A, "Object Moved":#5E35B1, "Object Modified":#EF6C00, "Other":#9E9E9E}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

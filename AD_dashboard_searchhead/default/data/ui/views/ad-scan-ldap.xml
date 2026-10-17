@@ -1,0 +1,173 @@
+<form theme="light" version="1.1">
+  <label>LDAP - hygiene Dashboard</label>
+  <description>AD hygiene and compliance monitoring</description>
+  
+  <init>
+    <set token="time_range.earliest">-90d@d</set>
+    <set token="time_range.latest">now</set>
+  </init>
+  <!-- Privileged Access -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #F1813F;">Privileged Access Audit</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Accounts with administrative privileges in Active Directory.<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Privileged Access Audit</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| where(primaryGroupID=512 OR primaryGroupID=518 OR primaryGroupID=519 OR match(memberOf, "CN=Domain Admins") OR match(memberOf, "CN=Schema Admins") OR match(memberOf, "CN=Enterprise Admins")) 
+| table displayName,primaryGroupID,memberOf,pwdLastSet,userAccountControl</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">5</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="primaryGroupID">
+          <colorPalette type="map">{"512":"#DC4E41","518":"#F1813F","519":"#DC4E41"}</colorPalette>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.displayName$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <!--  Kerberoastable Accounts -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #F8BE34;">Kerberoastable Accounts</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Non Machine Accounts with Service Principal Names (SPNs) set - making them vulnerable to Kerberoasting attacks.<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Kerberoastable Accounts</title>
+      <table>
+        <search>
+          <query>
+| inputlookup all-dc-users-comp-selectedattributes.csv 
+| where(isnotnull(servicePrincipalName)) 
+| eval hasdisabled=if(mvfind(userAccountControl,"ACCOUNTDISABLE") >= 0,1,0) 
+| where hasdisabled = 0 
+| where isnull(dNSHostName)
+| table cn,userAccountControl,servicePrincipalName
+</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="userAccountControl">
+          <colorPalette type="map">{"DONT_REQ_PREAUTH":"#DC4E41"}</colorPalette>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.cn$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <!--  Inactive/Orphaned Accounts -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #B6C75A;">Inactive &amp; Orphaned Accounts</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Accounts that haven't logged in for over 90 days.<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+    
+  <row>
+    <panel>
+      <title>Inactive and Orphaned Accounts (User Accounts Only)</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| eval lastLogon_epoch=strptime(lastLogonTimestamp,"%Y-%m-%dT%H:%M:%S.%6N%Z") 
+| eval days_since_login = floor((now()-lastLogon_epoch)/86400) 
+| where days_since_login &gt; 90 
+| eval hasdisabled=if(mvfind(userAccountControl,"ACCOUNTDISABLE") &gt;= 0,1,0) 
+| where hasdisabled = 0 
+| eval notworkstation=if(mvfind(userAccountControl,"WORKSTATION_TRUST_ACCOUNT") &gt;=0,1,0) 
+| where notworkstation = 0
+| table displayName,sAMAccountName,days_since_login,lastLogonTimestamp,userAccountControl
+| sort - days_since_login
+</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="days_since_login">
+          <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F8BE34" minColor="#53A051"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.displayName$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Poor Password Policies -->
+  <row>
+    <panel>
+      <html>
+        <h1 style="color: #F8BE34;">Poor Password Policies / Weak Posture</h1>
+        <p style="color: #666; font-size: 14px;">
+          <strong>What it shows:</strong> Accounts with dangerous User Account Control (UAC) flags - "Password Never Expires" or "Password Not Required".<br/>
+        </p>
+      </html>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <title>Poor Password Policies / Weak Posture</title>
+      <table>
+        <search>
+          <query>| inputlookup all-dc-users-comp-selectedattributes.csv 
+| where (mvfind(userAccountControl,"PASSWD_NOTREQD") &gt;= 0 OR mvfind(userAccountControl,"DONT_EXPIRE_PASSWD") &gt;= 0) 
+| eval hasdisabled=if(mvfind(userAccountControl,"ACCOUNTDISABLE") &gt;= 0,1,0) 
+| where hasdisabled = 0 
+| eval notworkstation=if(mvfind(userAccountControl,"WORKSTATION_TRUST_ACCOUNT") &gt;=0,1,0) 
+| where notworkstation = 0
+| eval lastLogon_epoch=strptime(lastLogonTimestamp,"%Y-%m-%dT%H:%M:%S.%6N%Z") 
+| eval days_since_login = floor((now()-lastLogon_epoch)/86400) 
+| table displayName,sAMAccountName,days_since_login,lastLogonTimestamp,userAccountControl</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="days_since_login">
+          <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F8BE34" minColor="#53A051"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+        <drilldown>
+          <link target="_blank">/app/solico-siem/asset_investigation?drilldown_host=$row.displayName$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+</form>

@@ -1,0 +1,90 @@
+<form version="1.1" theme="light">
+  <label>AD – Object Lifecycle</label>
+  <description>Creation, deletion, move, and undelete events for Active Directory Objects</description>
+
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>📅 Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label>🔍 Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter by group name, admin, or domain controller</placeholder>
+    </input>
+  </fieldset>
+
+  <!-- HEADER -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 20px; border-radius: 8px; color: #0d47a1;">
+          <h1 style="margin: 0; font-size: 28px; font-weight: 300;">AD – Object Lifecycle</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.8; font-size: 16px;">
+            Object creation, deletion, move, and undelete events — detect drift in the AD inventory.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- EVENTS -->
+  <row>
+    <panel>
+      <title>Object Lifecycle Events</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+EventCode IN (4727, 4730, 4731, 4734, 4744, 4748, 4749, 4753,
+              4754, 4758, 4759, 4763, 5137, 5138, 5139, 5141)
+| search $search_filter$
+| eval ObjectDN = coalesce(DN, TargetObject, ObjectName,New_DN)
+
+| rex field=Message "(?i)Group Name\s*:\s*(?&lt;GroupName&gt;[^\r\n]+)"
+| eval Group_Name = coalesce(Group_Name, GroupName)
+
+| eval AdminUser = SubjectUserName
+| eval Computer  = ComputerName
+
+| lookup cs_obj_change_eventcodes.csv EventCode
+    OUTPUT signature as DefaultSignature
+
+| eval Action = case(
+    EventCode IN (4727, 4731, 4744, 4749, 4754, 4759, 5137), "Create",
+    EventCode IN (4730, 4734, 4748, 4753, 4758, 4763, 5141), "Delete",
+    EventCode=5138, "Undelete",
+    EventCode=5139, "Move",
+    1=1, "Modify"
+  )
+
+| rex field=Message "(?i)New DN\s*:\s*(?&lt;new_dn_obj&gt;[^\r\n]+)"
+
+| eval AdminUser=Subject_Account_Name
+| eval admin_logonID=Logon_ID
+| eval Changes = coalesce(DefaultSignature, "-")
+| rex field=Message "(?i)DN\s*:\s*(?&lt;Target_Account_Name&gt;[^\r\n]+)"
+| eval Final_Target=case(EventCode = 5139,"New DN: " . ObjectDN . " | Old DN: " . Target_Account_Name,EventCode IN (4727,4730,4731,4734,4744,4748,4749,4753,4754,4758,4759,4763),Group_Name,EventCode = 5138,new_dn_obj, 1=1 ,Target_Account_Name)
+
+| table _time, Computer, AdminUser,Subject_Account_Domain,admin_logonID,Final_Target, Action, EventCode, signature
+| rename Final_Target as "Target Object"
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Action">
+          <colorPalette type="map">{"Create":#43A047, "Delete":#E53935, "Undelete":#1E88E5, "Move":#8E24AA, "Modify":#FB8C00}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

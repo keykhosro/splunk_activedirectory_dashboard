@@ -1,0 +1,98 @@
+<form version="1.1" theme="light">
+  <label>AD – Group Membership Changes</label>
+  <description>Users added to or removed from Active Directory groups — privilege escalation visibility</description>
+
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>📅 Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label>🔍 Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter by user, group, or administrator</placeholder>
+    </input>
+  </fieldset>
+
+  <!-- HEADER -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 20px; border-radius: 8px; color: #E65100;">
+          <h1 style="margin: 0; font-size: 28px; font-weight: 300;">🔗 AD – Group Membership Changes</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.8; font-size: 16px;">
+            Who added or removed whom from which group — the earliest signal of privilege escalation.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- EVENTS -->
+  <row>
+    <panel>
+      <title>📋 Group Membership Changes</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+EventCode IN (4728, 4729, 4732, 4733, 4746, 4747,
+              4751, 4752, 4756, 4757, 4761, 4762)
+| search $search_filter$
+| eval ObjectDN = coalesce(DN, TargetObject, ObjectName)
+| rex field=DN "(?i)cn=(?&lt;GroupName&gt;[^,]+)"
+
+| rex field=Message "(?i)Member\s+:\s+CN=(?&lt;MemberCN&gt;[^,]+)"
+| rex field=Message "(?i)Member\s+:\s+(?&lt;MemberSID&gt;S-\d-\d+-\d+-\d+-\d+-\d+)"
+| eval Member = coalesce(Member_Account_Name,Account_Name, MemberCN, MemberSID, "Unknown")
+
+| eval AdminUser = SubjectUserName
+| eval Computer  = ComputerName
+
+| eval Action = case(
+    EventCode IN (4728, 4732, 4746, 4751, 4756, 4761), "Add",
+    EventCode IN (4729, 4733, 4747, 4752, 4757, 4762), "Remove",
+    1=1, "Modify"
+  )
+
+| eval Group_Type = case(
+    EventCode IN (4728, 4729), "Global Security",
+    EventCode IN (4732, 4733), "Local Security",
+    EventCode IN (4746, 4747), "Local Distribution",
+    EventCode IN (4751, 4752), "Global Distribution",
+    EventCode IN (4756, 4757), "Universal Security",
+    EventCode IN (4761, 4762), "Universal Distribution",
+    1=1, "Unknown"
+  )
+| eval Group_Class = case(
+    EventCode IN (4728, 4729, 4732, 4733, 4756, 4757), "Security",
+    EventCode IN (4746, 4747, 4751, 4752, 4761, 4762), "Distribution",
+    1=1, "Unknown"
+  )
+| eval AdminUser=Subject_Account_Name
+| eval admin_logonID=Logon_ID
+| table _time, Computer, AdminUser,admin_logonID, Action, Group_Name, Group_Type, Group_Class,
+        Member,Member_Security_ID, EventCode
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Action">
+          <colorPalette type="map">{"Add":#43A047, "Remove":#E53935, "Modify":#FB8C00}</colorPalette>
+        </format>
+        <format type="color" field="Group_Type">
+          <colorPalette type="map">{"Global Security":#1E88E5, "Local Security":#43A047, "Universal Security":#8E24AA, "Local Distribution":#FB8C00, "Global Distribution":#FFA726, "Universal Distribution":#AB47BC, "Unknown":#9E9E9E}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

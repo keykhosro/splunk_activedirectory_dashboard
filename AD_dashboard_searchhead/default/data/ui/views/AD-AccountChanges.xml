@@ -1,0 +1,210 @@
+<form version="1.1" theme="light">
+  <label> AD - Account Changes</label>
+  <description>User account creation, deletion, enable/disable, password changes, UAC modifications and attribute changes</description>
+
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label> Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label> Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter by user, target account, or administrator</placeholder>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 20px; border-radius: 8px; color: #2E7D32;">
+          <h1 style="margin: 0; font-size: 28px; font-weight: 300;"> AD  Account Changes</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.85; font-size: 16px;">
+            Tracks user account creation, deletion, enable/disable, password changes, UAC modifications, and attribute changes.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title> User Account Changes</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+(
+  EventCode IN (
+    4720, 4722, 4724, 4725, 4726, 4738, 4765, 4766, 4767,
+    4781, 4794, 5137, 5139, 5138, 5141
+  )
+  OR
+  ( EventCode = 5136 AND (ObjectClass = "user" OR ObjectType = "User") )
+)
+| search "*$search_filter$*"
+| eval ObjectDN = coalesce(ObjectDN, TargetObject, ObjectName)
+| eval TargetUser = mvindex(split(ObjectDN, ","), 0)
+| eval TargetUser = replace(TargetUser, "CN=", "")
+| eval TargetUser = if(isnull(TargetUser), Account_Name, TargetUser)
+
+| rex field=Message "(?i)Caller Workstation\s*:\s*(?&lt;ComputerName1&gt;[^,\r\n]+)"
+| eval AdminUser = SubjectUserName
+| eval Computer = if( EventCode = 4794, ComputerName1, ComputerName)
+
+| lookup cs_obj_change_eventcodes.csv EventCode
+    OUTPUT change_action as RawAction, signature as DefaultSignature, alert
+
+| eval Action = case(
+    EventCode=4720, "Create",
+    EventCode=4722, "Enable",
+    EventCode=4725, "Disable",
+    EventCode=4726, "Delete",
+    EventCode=4767, "Unlock",
+    EventCode=5138, "Undelete",
+    EventCode=5139, "Move",
+    EventCode=5141, "Delete",
+    EventCode=4723, "Password Change Attempt",
+    EventCode=4724, "Password Reset",
+    EventCode=4794, "DSRM Password Reset",
+    EventCode=4781, "Rename",
+    EventCode=4738, "Modify",
+    EventCode=5136, "Modify",
+    EventCode=5137, "Create",
+    1=1, RawAction
+)
+| eval Action = if(isnull(Action), "Modify", Action)
+
+| eval EventSignature = DefaultSignature
+
+| rex field=Message "(?i)Old UAC Value\s*:\s*(?&lt;OldUac&gt;\d+)"
+| rex field=Message "(?i)New UAC Value\s*:\s*(?&lt;NewUac&gt;\d+)"
+| rex field=Message "(?i)userAccountControl\s*:\s*(?&lt;UacValue&gt;\d+)"
+| rex field=Message "(?i)AttributeLDAPDisplayName\s*:\s*(?&lt;AttrName&gt;[^,\r\n]+)"
+| rex field=Message "(?i)AttributeValue\s*:\s*(?&lt;AttrValue&gt;[^,\r\n]+)"
+| rex field=Message "(?i)OldValue\s*:\s*(?&lt;OldVal&gt;[^,\r\n]+)"
+| rex field=Message "(?i)NewValue\s*:\s*(?&lt;NewVal&gt;[^,\r\n]+)"
+| rex field=Message "(?i)Target User\s+Name\s*:\s*(?&lt;TargetUserMsg&gt;[^\r\n]+)"
+| rex field=Message "(?i)Member\s+:\s+CN=(?&lt;MemberCN&gt;[^,]+)"
+| rex field=Message "(?i)Account Name\s*:\s*(?&lt;AccountNameMsg&gt;[^\r\n]+)"
+
+| rex field=Message "(?i)DN\s*:\s*(?&lt;Target_Account_Name&gt;[^\r\n]+)"
+| rex field=Message "(?i)New Account:([\s\S]*?)Account Name:\s*(?&lt;Target_Account_Name1&gt;[^\r\n]+)"
+| rex field=Message "(?s)Changed Attributes:\s*(?&lt;ChangedAttrsBlock&gt;.*?)(?:\n\s*Additional Information:|$)"
+| eval ChangedAttrsBlock = replace(ChangedAttrsBlock, "\r", "")
+
+| rex field=Message "(?i)Target Account:([\s\S]*?)Account Name:\s*(?&lt;old_dn&gt;[^\r\n]+)"
+| rex field=Message "(?i)Source Account:([\s\S]*?)Account Name:\s*(?&lt;new_dn&gt;[^\r\n]+)"
+| rex field=Message "Old DN:\s+(?&lt;old_dn&gt;.*)"
+| rex field=Message "New DN:\s+(?&lt;new_dn&gt;.*)"
+| rex field=Message "Old Account Name:\s+(?&lt;old_dn&gt;.*)"
+| rex field=Message "New Account Name:\s+(?&lt;new_dn&gt;.*)"
+
+| eval changedaccount = case(EventCode=4766, "Target: " . old_dn, EventCode=4765, "Target: " . old_dn . " | Source: " . new_dn, EventCode=5139 OR EventCode=4781, "Old: " . old_dn . " | New: " . new_dn, 1=1, null())
+
+| eval ChangedAttrsBlock = replace(ChangedAttrsBlock, "\r", "")
+
+| rex field=ChangedAttrsBlock max_match=0 "(?m)^\s*(?&lt;ChangedAttrName&gt;[^:\n]+?):\s*(?&lt;ChangedAttrValue&gt;[^\n]*)$"
+| eval final_Target_Account_Name = coalesce(changedaccount,Target_Account_Name,Target_Account_Name1)
+| eval ChangedAttrPair = mvzip(ChangedAttrName, ChangedAttrValue, " = ")
+| eval ChangedAttrPair = mvfilter(NOT match(ChangedAttrPair, "=\s*-\s*$") AND ChangedAttrPair!="")
+| eval ChangedAttributes = mvjoin(ChangedAttrPair, " | ")
+
+| eval TargetUser = coalesce(TargetUser, TargetUserMsg, AccountNameMsg, MemberCN, Account_Name)
+| eval TargetUser = if(isnull(TargetUser), "Unknown", TargetUser)
+
+| eval UacValue = coalesce(NewUac, UacValue)
+
+| lookup cs_obj_uac.csv userAccountControl as UacValue
+    OUTPUT uac_details as UAC_Details
+
+| lookup cs_obj_uac.csv userAccountControl as OldUac
+    OUTPUT uac_details as Old_UAC_Details
+
+| eval UacChange = if(isnotnull(OldUac) AND isnotnull(NewUac),
+    "UAC changed from " . OldUac . " (" . coalesce(Old_UAC_Details, "Unknown") . ") to " . NewUac . " (" . coalesce(UAC_Details, "Unknown") . ")",
+    null()
+)
+
+| eval AttributeChange = if(EventCode=5136 AND isnotnull(AttrName),
+    "Attribute '" . AttrName . "' changed from '" . coalesce(OldVal, OldValue) . "' to '" . coalesce(NewVal, AttrValue) . "'",
+    null()
+)
+
+| eval SpecificChange = if(EventCode=4723,
+    "Password change attempted for user: " . TargetUser,
+    if(EventCode=4724,
+        "Password reset performed for user: " . TargetUser,
+        if(EventCode=4794,
+            "Directory Services Restore Mode password reset attempted",
+            if(EventCode=4720,
+                "User account created with UAC: " . coalesce(UAC_Details, "Unknown"),
+                if(EventCode=4722,
+                    "User account enabled (previously disabled)",
+                    if(EventCode=4725,
+                        "User account disabled",
+                        if(EventCode=4767,
+                            "User account unlocked",
+                            if(EventCode=4781,
+                                "User account renamed",
+                                if(EventCode=5138,
+                                    "User account undeleted from Recycle Bin",
+                                    if(EventCode=5139,
+                                        "User account moved from: " . coalesce(OldValue, "Unknown") . " to: " . coalesce(NewValue, "Unknown"),
+                                        null()
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+
+| eval Changes = coalesce(
+    if(EventSignature!="-" AND EventSignature!="" AND EventSignature!="null", EventSignature, null()),
+    UacChange,
+    AttributeChange,
+    SpecificChange
+)
+
+| eval Changes = if(isnull(Changes),
+    "User account modified (unknown change)",
+    Changes
+)
+
+| eval UAC_Details = if(isnull(UAC_Details), "Unknown", UAC_Details)
+
+| eval AdminUser=Subject_Account_Name
+| eval admin_logonID=Logon_ID
+| eval Member = coalesce(Member_Account_Name,Account_Name, MemberCN, MemberSID, "Unknown")
+
+| table _time, Computer, AdminUser, Subject_Account_Domain, admin_logonID, final_Target_Account_Name, Action, EventCode, signature, ChangedAttributes
+
+| rename final_Target_Account_Name as "Target User",
+         signature as "Changes"
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Action">
+          <colorPalette type="map">{"Create":#43A047,"created":#43A047, "Delete":#E53935, "Enable":#1E88E5, "Disable":#FB8C00, "Unlock":#8E24AA, "Undelete":#00BCD4, "Move":#3F51B5, "Password Change Attempt":#FF6F00, "Password Reset":#E65100, "DSRM Password Reset":#C62828, "Rename":#6A1B9A,"modified":#FB8C00, "Modify":#FB8C00}</colorPalette>
+        </format>
+        <format type="color" field="UAC_Details">
+          <colorPalette type="map">{"Enabled:Normal User Account":#43A047, "Disabled:Normal User Account":#E53935, "Enabled:Normal User Account:Password Does Not Expire":#1E88E5, "Disabled:Normal User Account:Password Does Not Expire":#FB8C00}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

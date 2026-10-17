@@ -1,0 +1,116 @@
+<form version="1.1" theme="light">
+  <label>AD – Group Attribute Changes</label>
+  <description>Field-level modifications to Active Directory group objects and their attributes</description>
+
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>📅 Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label>🔍 Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter by group name, admin, or attribute</placeholder>
+    </input>
+  </fieldset>
+
+  <!-- HEADER -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%); padding: 20px; border-radius: 8px; color: #1a237e;">
+          <h1 style="margin: 0; font-size: 28px; font-weight: 300;">AD – Group Attribute Changes</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.8; font-size: 16px;">
+            Attribute-level changes to AD groups — scope, type, name, description, and other LDAP attributes.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- EVENTS -->
+  <row>
+    <panel>
+      <title>📋 Group Attribute Modifications</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+(
+  EventCode=5136 AND (Class="group" OR ObjectType="Group") 
+)
+| search $search_filter$
+| eval ObjectDN = coalesce(DN, TargetObject, ObjectName)
+| rex field=DN "(?i)cn=(?&lt;GroupName&gt;[^,]+)"
+| eval AdminUser = SubjectUserName
+| eval Computer  = ComputerName
+
+| lookup cs_obj_change_eventcodes.csv EventCode
+    OUTPUT signature as DefaultSignature
+
+| rex field=Message "(?i)AttributeLDAPDisplayName\s*:\s*(?&lt;AttrName&gt;[^,\r\n]+)"
+| rex field=Message "(?i)OldValue\s*:\s*(?&lt;OldVal&gt;[^,\r\n]+)"
+| rex field=Message "(?i)NewValue\s*:\s*(?&lt;NewVal&gt;[^,\r\n]+)"
+| rex field=Message "(?i)AttributeValue\s*:\s*(?&lt;AttrValue&gt;[^,\r\n]+)"
+| rex field=Message "(?i)groupType\s*:?\s+(?&lt;GroupTypeCode&gt;-?\d+)"
+
+| rex field=Message "(?i)Operation:\s*Type:?\s*(?&lt;operation_type&gt;[^,\r\n]+)"
+| rex field=Message "(?i)Attribute:\s*(?&lt;Attributes&gt;[\s\S]*?)(?=\n\s*\n\w+:|\z)"
+| rex field=Attributes mode=sed "s/Syntax \\(OID\\):[^\n]*\n//g"
+| eval Attributes=replace(Attributes, "\n", ", ")
+| eval Attributes=replace(Attributes, "\t", "")
+| eval Attributes=replace(Attributes, "\s+", " ")
+
+
+
+| eval RawGroupType = coalesce(AttrValue, GroupTypeCode)
+| lookup cs_obj_group_details.csv groupType as RawGroupType
+    OUTPUT groupType_Name as Group_Type_Full,
+           MSADGroupType  as Group_Type,
+           MSADGroupClass as Group_Class
+
+
+| eval Group_Type = case(
+    EventCode IN (4737), "Global Security", EventCode IN (4735), "Local Security", EventCode IN (4745), "Local 
+    Distribution", EventCode IN (4750), "Global Distribution", EventCode IN (4755), "Universal Security", 
+    EventCode IN (4760), "Universal Distribution", EventCode IN (4764), "change security enabled,disabled", 1=1, 
+    "Unknown"
+  )
+| eval Group_Class = case(
+    EventCode IN (4737,4735,4755), "Security", EventCode IN (4745,4750,4760), "Distribution", EventCode IN 
+    (4764), "change security mode", 1=1, "Unknown"
+  )
+
+
+| eval Changes = case(
+    EventCode=5136 AND isnotnull(AttrName),
+        "Attribute '".AttrName."' changed from '".coalesce(OldVal,"-")."' to '".coalesce(NewVal,"-")."'",
+    isnotnull(DefaultSignature), DefaultSignature,
+    1=1, "Group attribute modified"
+  )
+| eval admin_logonID=Logon_ID
+| eval AdminUser=Subject_Account_Name
+| table _time, Computer, AdminUser,admin_logonID, ObjectDN, GUID,operation_type,Attributes
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="operation_type">
+          <colorPalette type="map">{"Value Added":#43A047, "Value Deleted":#FB8C00}</colorPalette>
+        </format>
+        <format type="color" field="Group_Class">
+          <colorPalette type="map">{"Security":#43A047, "Distribution":#FB8C00, "Basic":#1E88E5, "Unknown":#9E9E9E}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

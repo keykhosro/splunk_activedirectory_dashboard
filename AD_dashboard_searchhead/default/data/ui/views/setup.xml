@@ -1,0 +1,19 @@
+<dashboard version="1.1" script="setup.js">
+  <label>App Setup</label>
+  <row>
+    <panel>
+      <html>
+        <h2>Configure DC Index</h2>
+        <p>Enter the index name where your Domain Controller data is stored.</p>
+        
+        <div style="margin-top: 20px;">
+          <label for="index-input">Index Name:</label>
+          <input type="text" id="index-input" placeholder="e.g., dc_index" style="margin-left: 10px;" />
+          <button id="save-btn" style="margin-left: 10px;">Save</button>
+        </div>
+        
+        <div id="message" style="margin-top: 15px; font-weight: bold;"></div>
+      </html>
+    </panel>
+  </row>
+</dashboard>

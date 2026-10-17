@@ -1,0 +1,17 @@
+<nav>
+    <view name="AD-DClogs" default='true' />  
+    <collection label="Active Directory">
+        <view name="AD_userauth" />
+        <view name="AD-AccountChanges" />
+        <view name="AD_Group_Attribute_Changes" />
+        <view name="AD_Group_Lifecycle" />
+        <view name="AD_Group_Membership_Changes" />
+        <view name="AD_GPOChanges" />
+	<view name="ad_investigation" />
+	<view name="ad-scan" />
+        <view name="ad-scan-ldap" />
+    </collection>
+    <view name="setup" />  
+    <view name="search"  />
+
+</nav>

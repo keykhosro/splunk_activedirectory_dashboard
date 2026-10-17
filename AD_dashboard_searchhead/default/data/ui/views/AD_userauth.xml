@@ -1,0 +1,317 @@
+<form version="1.1" theme="light">
+  <label>AD – Authentication Anomalies &amp; Bulk Accounts</label>
+  <description>Password changes outside working hours, user account lockouts, bulk user creation/deletion, and short-lived accounts.</description>
+
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>📅 Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label>🔍 Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter all panels (e.g., username, group name)</placeholder>
+    </input>
+  </fieldset>
+
+  <!-- ============================================================ -->
+  <!--         AD - PASSWORD ANOMALIES &amp; LOCKOUTS               -->
+  <!-- ============================================================ -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #fbe9e7; padding: 12px 16px; border-radius: 4px; border-left: 4px solid #BF360C; margin-bottom: 8px;">
+          <h2 style="margin: 0; color: #BF360C; font-size: 18px; font-weight: 500;">AD – Authentication Anomalies</h2>
+          <p style="margin: 4px 0 0 0; color: #555; font-size: 13px;">
+            Detects password changes outside working hours and user account lockouts — key indicators of compromised accounts.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Password Changes Outside Working Hours</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+(
+  EventCode IN (4624, 4768, 4769)
+  AND src=*
+  AND NOT src IN ("-", "::1", "0.0.0.0", "127.0.0.1")
+)
+[
+  search `DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+    EventCode IN (627, 628, 4723, 4724, 4794)
+  | dedup ComputerName Subject_Account_Name
+  | table ComputerName Subject_Account_Name
+  | rename Subject_Account_Name AS user
+]
+| search $search_filter|s$
+| eval date_wday = strftime(_time, "%A")
+| eval date_hour = tonumber(strftime(_time, "%H"))
+| eval WorkingHours = case(
+    date_wday IN ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday") AND date_hour &gt;= 7 AND date_hour &lt; 17, "Working",
+    1=1, "Outside"
+  )
+| search WorkingHours="Outside"
+| eval EventType = "Logon"
+| table _time ComputerName Subject_Account_Name src EventCode WorkingHours EventType
+
+| append
+  [
+    search `DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+      EventCode IN (627, 628, 4723, 4724, 4794)
+    | search $search_filter|s$
+    | eval date_wday = strftime(_time, "%A")
+    | eval date_hour = tonumber(strftime(_time, "%H"))
+    | eval WorkingHours = case(
+        date_wday IN ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday") AND date_hour &gt;= 7 AND date_hour &lt; 17, "Working", 1=1, "Outside")
+    | search WorkingHours="Outside"
+    | eval Subject_Account_Name = Account_Name
+    | eval TargetUser = coalesce(TargetAccountName, AccountName, user)
+    | eval ComputerName = ComputerName
+    | eval TargetDomain = coalesce(TargetAccountDomain, AccountDomain)
+    | eval Action = case(
+        EventCode IN (4723, 4724), "Password Change/Reset",
+        EventCode=4794, "DSRM Password Reset",
+        EventCode IN (627, 628), "Password Change (Legacy)"
+      )
+    | eval EventType = "PasswordChange"
+    | table _time ComputerName Subject_Account_Name TargetUser TargetDomain EventCode Action WorkingHours EventType
+  ]
+
+| sort 0 _time
+
+| eventstats values(src) as ProbableSources by ComputerName Subject_Account_Name
+
+| where EventType="PasswordChange"
+
+| eval Target_User = TargetUser
+| eval Actor = Subject_Account_Name
+| eval Actor_User_Domain = "Domain"
+| eval Source_Computer = mvindex(ProbableSources, 0)
+| eval Source_Computer = if(isnull(Source_Computer), ComputerName, Source_Computer)
+
+| table _time Target_User Actor Source_Computer EventCode Action Actor_User_Domain WorkingHours
+| rename Target_User AS "Target User",
+         Actor AS "Actor",
+         Source_Computer AS "Probable Sources",
+         Actor_User_Domain AS "Actor User Domain"
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="WorkingHours">
+          <colorPalette type="map">{"Working":#43A047, "Outside":#E53935}</colorPalette>
+        </format>
+        <format type="color" field="Action">
+          <colorPalette type="map">{"Password Change/Reset":#FB8C00, "DSRM Password Reset":#E53935, "Password Change (Legacy)":#FF6F00}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>User Account Lockouts</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+EventCode=4740
+| search $search_filter|s$
+| eval Account_Name = mvfilter(NOT match(Account_Name, "\$"))
+| search Account_Name=*
+| eval date_wday = strftime(_time, "%A")
+| eval date_hour = tonumber(strftime(_time, "%H"))
+| eval WorkingHours = case(date_wday IN ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday") AND date_hour &gt;= 7 AND date_hour &lt; 17, "Working", 1=1, "Outside")
+| table _time ComputerName Account_Domain Account_Name Caller_Computer_Name WorkingHours
+| rename ComputerName AS "Domain_Controller",
+         Account_Domain AS "User_Domain",
+         Account_Name AS "User_Name",
+         Caller_Computer_Name AS "Source_Computer_Name"
+| fillnull value="-" Source_Computer_Name
+| sort - _time</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="WorkingHours">
+          <colorPalette type="map">{"Working":#43A047, "Outside":#E53935}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ============================================================ -->
+  <!--          AD - BULK &amp; SHORT-LIVED ACCOUNTS                -->
+  <!-- ============================================================ -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #f3e5f5; padding: 12px 16px; border-radius: 4px; border-left: 4px solid #6A1B9A; margin-bottom: 8px;">
+          <h2 style="margin: 0; color: #6A1B9A; font-size: 18px; font-weight: 500;">AD – Bulk &amp; Short-Lived Accounts</h2>
+          <p style="margin: 4px 0 0 0; color: #555; font-size: 13px;">
+            Detects mass user account creation/deletion and accounts created and deleted quickly — indicators of automated attacks or identity management issues.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Bulk User Creation/Deletion (≥4 per hour)</title>
+      <table>
+        <search>
+          <query>
+
+`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security") EventCode IN (4720, 4726)
+| rex field=Message max_match=0 "(?m)^[ \t]*Account Name:[ \t]*(?&lt;AccountNames&gt;[^\r\n]+)"
+| rex field=Message max_match=0 "(?m)^[ \t]*Account Domain:[ \t]*(?&lt;AccountDomains&gt;[^\r\n]+)"
+| rex field=Message "(?m)^[ \t]*Logon ID:[ \t]*(?&lt;Logon_ID&gt;[^\r\n]+)"
+| eval AdminUser     = mvindex(AccountNames, 0)
+| eval AdminDomain   = mvindex(AccountDomains, 0)
+| eval TargetUser    = mvindex(AccountNames, 1)
+| eval TargetDomain  = mvindex(AccountDomains, 1)
+| eval admin_logonID = Logon_ID
+| where isnotnull(TargetUser)
+| where NOT match(TargetUser, "\$$") AND NOT match(AdminUser, "\$$")
+| where TargetUser != AdminUser
+
+| eval Action = if(EventCode=4720, "Created", "Deleted")
+| bin _time span=1h
+| stats count                as EventCount
+        values(TargetUser)   as Target_Users
+        values(ComputerName) as Computers
+        min(_time)           as FirstEvent
+        max(_time)           as LastEvent
+    by _time AdminUser AdminDomain Action
+
+| where EventCount >= 4
+
+| eval Target_User_List = mvjoin(mvdedup(Target_Users), ", ")
+| eval Computers        = mvjoin(Computers, ", ")
+| eval FirstEvent       = strftime(FirstEvent, "%Y-%m-%d %H:%M:%S")
+| eval LastEvent        = strftime(LastEvent,  "%Y-%m-%d %H:%M:%S")
+| eval Severity         = case(
+    EventCount >= 50, "Critical",
+    EventCount >= 20, "High",
+    EventCount >= 10, "Medium",
+    1=1,              "Low")
+
+| table _time, AdminUser, AdminDomain, Action, EventCount,
+        Severity, FirstEvent, LastEvent, Target_User_List, Computers
+
+| rename _time            as "Hour Bucket",
+         AdminUser        as "Administrator",
+         AdminDomain      as "Admin Domain",
+         Action           as "Action",
+         EventCount       as "Number of Accounts",
+         Severity         as "Severity",
+         FirstEvent       as "First Event",
+         LastEvent        as "Last Event",
+         Target_User_List as "Target Users",
+         Computers        as "Domain Controllers"
+
+| sort - "Number of Accounts"
+</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Action">
+          <colorPalette type="map">{"Created":#43A047, "Deleted":#E53935}</colorPalette>
+        </format>
+        <format type="color" field="EventCount">
+          <colorPalette type="minMidMax" maxColor="#E53935" midColor="#FB8C00" minColor="#43A047" />
+          <scale type="minMidMax" />
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Short-Lived Accounts (&lt; 16 hours)</title>
+      <table>
+        <search>
+          <query>
+
+`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security") EventCode IN (4720, 4726)
+| rex field=Message max_match=0 "(?m)^[ \t]*Account Name:[ \t]*(?&lt;AccountNames&gt;[^\r\n]+)"
+| eval AdminUser  = mvindex(AccountNames, 0)
+| eval TargetUser = mvindex(AccountNames, 1)
+| where isnotnull(TargetUser)
+| where NOT match(TargetUser, "\$$") AND NOT match(AdminUser, "\$$")
+| where TargetUser != AdminUser
+| eval CreateTime = if(EventCode=4720, _time, null())
+| eval DeleteTime = if(EventCode=4726, _time, null())
+| stats min(CreateTime)          as CreateTime
+        max(DeleteTime)          as DeleteTime
+        count(eval(EventCode=4720)) as CreateEvents
+        count(eval(EventCode=4726)) as DeleteEvents
+        values(ComputerName)     as Computers
+        values(AdminUser)        as Admins
+        dc(AdminUser)            as AdminCount
+    by TargetUser
+| where isnotnull(CreateTime) AND isnotnull(DeleteTime)
+| where CreateTime &lt;= DeleteTime
+| eval Lifespan = DeleteTime - CreateTime
+| where Lifespan &lt; 48800
+| eval CreateTime     = strftime(CreateTime, "%Y-%m-%d %H:%M:%S")
+| eval DeleteTime     = strftime(DeleteTime, "%Y-%m-%d %H:%M:%S")
+| eval Lifespan_Human = tostring(Lifespan, "duration")
+| eval Severity       = case(
+    Lifespan &lt; 300,   "Critical",  
+    Lifespan &lt; 3600,  "High",       
+    Lifespan &lt; 24400, "Medium",    
+    1=1,              "Low")
+| eval Admins    = mvjoin(mvdedup(Admins), ", ")
+| eval Computers = mvjoin(mvdedup(Computers), ", ")
+
+| table TargetUser, CreateTime, DeleteTime, Lifespan, Lifespan_Human,
+        Severity, Admins, AdminCount, Computers, CreateEvents, DeleteEvents
+
+| rename TargetUser     as "User Account",
+         CreateTime     as "Created At",
+         DeleteTime     as "Deleted At",
+         Lifespan       as "Lifespan (s)",
+         Lifespan_Human as "Lifespan",
+         Severity       as "Severity",
+         Admins         as "Administrators",
+         AdminCount     as "Admin Count",
+         Computers      as "Domain Controllers",
+         CreateEvents   as "# Create Events",
+         DeleteEvents   as "# Delete Events"
+
+| sort Lifespan
+
+</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Lifespan">
+          <colorPalette type="minMidMax" maxColor="#E53935" midColor="#FB8C00" minColor="#43A047" />
+          <scale type="minMidMax" />
+        </format>
+      </table>
+    </panel>
+  </row>
+
+</form>

@@ -1,0 +1,273 @@
+<form version="1.1" theme="light">
+  <label>Active Directory Security &amp; Audit Dashboard</label>
+  <description>Active Directory security toolkit: event-driven AD monitoring (changes, groups, users, password anomalies, lockouts), real-time LDAP queries (ldap-* dashboards, needs SA-ldapsearch), and AD attribute security checks. This page verifies required add-ons, lookups, indexes, DCs, and audit event codes.</description>
+  
+  <!-- AUTO-REFRESH: Runs all searches every 5 minutes -->
+  <refresh>5m</refresh>
+  <refreshType>full</refreshType>
+
+  <fieldset submitButton="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>📅 Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="search_filter" searchWhenChanged="true">
+      <label>🔍 Global Search Filter</label>
+      <default>*</default>
+      <prefix>*</prefix>
+      <suffix>*</suffix>
+      <placeholder>Filter all panels (e.g., username, group name)</placeholder>
+    </input>
+  </fieldset>
+
+  <!-- ============================================================ -->
+  <!--        HEADER &amp; DATA STATUS                              -->
+  <!-- ============================================================ -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 20px; border-radius: 8px; color: #0d47a1; margin-bottom: 0;">
+          <h1 style="margin: 0; font-size: 28px; font-weight: 300;">Active Directory Security &amp; Audit — Health Check</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.8; font-size: 16px;">
+            Environment readiness and requirements verification for AD security monitoring.
+          Confirms that the required add-ons, lookups, data sources, Domain Controllers,
+          and audit event codes are all in place.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Data Collection Status</title>
+      <single>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security") | head 1 | stats count as total | eval status = if(total&gt;0, "✅ Data Present", "❌ No Data Found") | table status</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <format type="color" field="status">
+          <colorPalette type="map">{"✅ Data Present":#43A047, "❌ No Data Found":#E53935}</colorPalette>
+        </format>
+      </single>
+      <html>
+        <div style="text-align:center;font-size:12px;color:#888;padding-top:6px;">
+          If no data is found, set the correct Domain Controller index in <b>App Setup</b> page.
+        </div>
+      </html>
+    </panel>
+    <panel>
+      <html>
+        <div style="background: #e8eaf6; padding: 15px 20px; border-radius: 6px; color: #1a237e; height: 100%; display: flex; flex-direction: column; justify-content: center;">
+          <p style="margin: 0; font-size: 14px; opacity: 0.9;">📋 <b>Required Lookup Files:</b></p>
+          <p style="margin: 4px 0 0 20px; font-size: 12px; opacity: 0.8;">
+            • cs_obj_change_eventcodes.csv<br/>
+            • cs_obj_group_details.csv<br/>
+            • cs_obj_uac.csv<br/>
+            • cs_eventcode_class.csv
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+
+  <!-- ============================================================ -->
+  <!--       PREREQUISITES / DEPENDENCIES                           -->
+  <!-- ============================================================ -->
+  <row>
+    <panel>
+      <title>Prerequisite Add-ons</title>
+      <table>
+        <search>
+          <!-- Live check. Requires admin, or a role holding the "list_apps" capability. -->
+          <query>| makeresults count=1
+| eval app=split("Splunk_TA_windows,SA-ldapsearch", ",")
+| mvexpand app
+| join type=left app
+    [| rest /services/apps/local
+     | rename title as app
+     | where app IN ("Splunk_TA_windows","SA-ldapsearch")
+     | fields app label version
+     | rename label as Name, version as Version
+     | eval Installed="✅ Installed"]
+| eval Installed=coalesce(Installed, "❌ Not Installed")
+| eval Name=coalesce(Name, "—")
+| eval Version=coalesce(Version, "—")
+| eval Requirement=case(
+      app="Splunk_TA_windows",
+        "Hard requirement — field extraction for Windows Security events",
+      app="SA-ldapsearch",
+        "Optional — required for dashboards prefixed ldap-*",
+      true(), "—")
+| rename app as App
+| table App Name Requirement Installed Version
+| sort App </query>
+        </search>
+        <option name="count">10</option>
+        <option name="drilldown">none</option>
+        <option name="wrap">true</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅ Installed":#43A047, "❌ Not Installed":#E53935}</colorPalette>
+        </format>
+      </table>
+      <html>
+        <div class="ad-foot">
+          Install / update add-ons via <b>Apps → Manage Apps</b>. A restart may be required.
+        </div>
+      </html>
+    </panel>
+  </row>
+
+
+
+  <!-- ============================================================ -->
+  <!--         HEALTH CHECK — DCs &amp; AUDIT EVENT CODE STATUS     -->
+  <!-- ============================================================ -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #e0f2f1; padding: 12px 16px; border-radius: 4px; border-left: 4px solid #00695C; margin-bottom: 8px;">
+          <h2 style="margin: 0; color: #00695C; font-size: 18px; font-weight: 500;">Data Source Health Check</h2>
+          <p style="margin: 4px 0 0 0; color: #555; font-size: 13px;">
+            Verifies which Domain Controllers are actively sending logs and whether required audit event codes are being collected. Missing event codes usually indicate an audit policy that must be enabled via Group Policy on the DC.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Available Domain Controllers</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security") | stats count by host | table host count | sort - count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Active Event Codes per Audit Class</title>
+      <table>
+        <search>
+          <query>`DC-index` (sourcetype="WinEventLog:Security" OR source="WinEventLog:Security")
+| lookup cs_eventcode_class.csv EventCode OUTPUT class
+| stats count values(EventCode) as seen_codes by class
+| append [
+    | inputlookup cs_eventcode_class.csv
+    | stats values(EventCode) as all_codes by class
+  ]
+| stats sum(count) as count values(seen_codes) as seen_codes values(all_codes) as all_codes by class
+| fillnull value=0 count
+| eval Status = if(count&gt;0, "✅ ACTIVE", "❌ MISSING")
+| eval EventCodes = if(count&gt;0, mvjoin(seen_codes, ", "), mvjoin(all_codes, ", "))
+| table class Status EventCodes count
+| sort class</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅ ACTIVE":#43A047, "❌ MISSING":#E53935}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>SA-ldapsearch Connectivity Test</title>
+      <table>
+        <search>
+          <query>| ldapsearch domain="default" search="(&amp;(samAccountName=Administrator))" attrs="uSNChanged,lastLogonTimestamp,sAMAccountName"
+| table sAMAccountName lastLogonTimestamp uSNChanged</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">5</option>
+        <option name="drilldown">none</option>
+        <option name="wrap">true</option>
+      </table>
+      <html>
+        <div style="text-align:center;font-size:12px;color:#888;padding-top:6px;">
+          If this panel is <b>empty</b>, SA-ldapsearch is not configured correctly. LDAP command
+          errors appear under <b>Job → Inspect → Messages</b> after the search runs.
+          Configure the connection under <b>Apps → SA-ldapsearch → Configuration</b>
+          (set a <code>default</code> domain).
+        </div>
+      </html>
+    </panel>
+  </row>
+
+
+  <row>
+    <panel>
+      <html>
+        <style>
+          .ldap-refresh {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #1a237e;
+            height: 100%;
+          }
+          .ldap-refresh h3 {
+            margin: 0 0 10px 0;
+            font-size: 15px;
+            color: #0d47a1;
+            font-weight: 600;
+          }
+          .ldap-refresh p {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: #555;
+            line-height: 1.6;
+          }
+          .ldap-refresh .ldap-code {
+            display: block;
+            background: #263238;
+            color: #eceff1;
+            padding: 10px 14px;
+            border-radius: 5px;
+            font-family: "SFMono-Regular", Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            margin: 6px 0;
+            overflow-x: auto;
+          }
+          .ldap-refresh .callout {
+            background: #e8eaf6;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 12.5px;
+            color: #1a237e;
+            line-height: 1.6;
+            margin-top: 10px;
+          }
+        </style>
+
+        <div class="ldap-refresh">
+          <h3>🔄 Lookup CSV Refresh</h3>
+          <p>
+            <b>Second — run these two for the first time.</b> They fill the CSV files, after
+            which they update automatically on a weekly schedule. If you want a manual update,
+            run these queries:
+          </p>
+          <span class="ldap-code">| savedsearch "query:ldap - all user and computers"</span>
+          <span class="ldap-code">| savedsearch "query:ldap - all dc groups"</span>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+
+
+</form>
