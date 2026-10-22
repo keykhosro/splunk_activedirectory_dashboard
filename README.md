@@ -58,7 +58,7 @@ Requires `SA-ldapsearch`.
 
 ### From a release package
 
-1. Download `AD_dashboard_searchhead-1.0.0.spl` from the [Releases](https://github.com/keykhosro/splunk_activedirectory_dashboard/releases) page.
+1. Download `AD_dashboard_searchhead-1.0.0.spl` from the [Releases](https://github.com/keykhosro/splunk_activedirectory_dashboard/releases) page or from [Splunkbase](https://splunkbase.splunk.com/app/10070/) page.
 2. In Splunk: **Apps → Manage Apps → Install app from file**.
 3. Upload the `.spl` and restart Splunk if prompted.
 
