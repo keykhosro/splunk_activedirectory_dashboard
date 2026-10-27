@@ -68,9 +68,11 @@ Copy the `AD_dashboard_searchhead` folder into:
 
     $SPLUNK_HOME/etc/apps/
 
-Then restart Splunk or refresh from here:
+Then restart Splunk, or refresh the app configuration without a restart by visiting:
 
-   [https://splunkurl:splunkport/en-US/debug/refresh]
+    https://<splunk-host>:<port>/en-US/debug/refresh
+
+(admin login required)
 
 ---
 
