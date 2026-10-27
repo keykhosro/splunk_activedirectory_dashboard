@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "2.0.0",
+  "info": {
+    "title": "AD Dashboard Searchhead",
+    "id": {
+      "group": null,
+      "name": "AD_dashboard_searchhead",
+      "version": "1.0.1"
+    }
+  },
+  "dependencies": {
+    "Splunk_TA_windows": {
+      "optional": false
+    },
+    "SA-ldapsearch": {
+      "optional": true
+    }
+  },
+  "supportedDeployments": ["*"],
+  "targetWorkloads": ["_search_heads"]
+}
