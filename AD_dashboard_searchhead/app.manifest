@@ -3,15 +3,13 @@
   "info": {
     "title": "Keykhosro Active Directory Security and Audit",
     "id": {
-      "group": null,
       "name": "AD_dashboard_searchhead",
       "version": "1.0.2"
     },
     "author": [
       {
         "name": "keykhosro khosravani",
-        "email": "keykhosro.khosravani@gmail.com",
-        "company": null
+        "email": "keykhosro.khosravani@gmail.com"
       }
     ],
     "releaseDate": "2026-10-28",
@@ -32,20 +30,26 @@
     },
     "license": {
       "name": "MIT License",
-      "uri": "https://github.com/keykhosro/splunk_activedirectory_dashboard"
+      "uri": "https://github.com/keykhosro/splunk_activedirectory_dashboard/blob/main/LICENSE"
     },
     "releaseNotes": {
-      "uri": null
+      "uri": "https://splunkbase.splunk.com/app/10070"
     }
   },
   "dependencies": {
     "Splunk_TA_windows": {
+      "version": "*",
       "optional": false
     },
     "SA-ldapsearch": {
+      "version": "*",
       "optional": true
     }
   },
-  "supportedDeployments": ["*"],
-  "targetWorkloads": ["_search_heads"]
+  "supportedDeployments": [
+    "*"
+  ],
+  "targetWorkloads": [
+    "_search_heads"
+  ]
 }
