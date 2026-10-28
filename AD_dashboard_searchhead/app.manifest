@@ -1,11 +1,43 @@
 {
   "schemaVersion": "2.0.0",
   "info": {
-    "title": "AD Dashboard Searchhead",
+    "title": "Keykhosro Active Directory Security and Audit",
     "id": {
       "group": null,
       "name": "AD_dashboard_searchhead",
-      "version": "1.0.1"
+      "version": "1.0.2"
+    },
+    "author": [
+      {
+        "name": "keykhosro khosravani",
+        "email": "keykhosro.khosravani@gmail.com",
+        "company": null
+      }
+    ],
+    "releaseDate": "2026-10-28",
+    "description": "Monitors Active Directory security and operations through specialized dashboards for authentication events, account changes, group policy modifications, LDAP hygiene, and attack path analysis.",
+    "classification": {
+      "intendedAudience": "Security",
+      "categories": [
+        "Security",
+        "Fraud & Compliance",
+        "SIEM"
+      ],
+      "developmentStatus": "Production/Stable"
+    },
+    "commonInformationModels": {
+      "Authentication": "*",
+      "Change": "*"
+    },
+    "license": {
+      "name": "MIT License",
+      "text": "LICENSE",
+      "uri": "https://github.com/keykhosro/splunk_activedirectory_dashboard"
+    },
+    "releaseNotes": {
+      "name": "README",
+      "text": "README.md",
+      "uri": null
     }
   },
   "dependencies": {
