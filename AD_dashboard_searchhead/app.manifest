@@ -23,11 +23,6 @@
       ],
       "developmentStatus": "Production/Stable"
     },
-    "commonInformationModels": {
-      "8.x": "*",
-      "6.x": "*",
-      "5.x": "*"
-    },
     "license": {
       "name": "MIT License",
       "uri": "https://github.com/keykhosro/splunk_activedirectory_dashboard/blob/main/LICENSE"
